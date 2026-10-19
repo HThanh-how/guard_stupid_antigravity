@@ -7,7 +7,7 @@ import os
 from pathlib import Path
 import re
 import runpy
-import shlex
+import guard_platform as platform
 import subprocess
 import time
 import unicodedata
@@ -82,11 +82,11 @@ def latest_human_request(data):
 def permission_scope(data):
     args = data.get('toolCall', {}).get('args', {})
     cwd = args.get('Cwd') or args.get('cwd') or args.get('working_directory') or next(iter(data.get('workspacePaths', [])), os.getcwd())
-    words = shlex.split(args.get('CommandLine') or args.get('command') or '')
+    words = platform.split(args.get('CommandLine') or args.get('command') or '')
     if len(words) > 3 and words[0] == 'cd' and words[2] == '&&':
         cwd = str((Path(cwd) / words[1]).resolve())
         words = words[3:]
-    if words and Path(words[0]).name == 'git':
+    if words and platform.basename(words[0]) == 'git':
         index = 1
         while index < len(words) and words[index].startswith('-'):
             flag = words[index]
@@ -112,7 +112,7 @@ def permission_cache(data, request):
 def cached_authorization(data, request):
     try:
         path, scope = permission_cache(data, request)
-        result = json.loads(path.read_text())
+        result = json.loads(path.read_text(encoding='utf-8'))
         if result.get('request_id') != request['id'] or result.get('scope') != scope or result.get('expires', 0) <= time.time():
             return set()
         report = result.get('report', {})

@@ -1,4 +1,5 @@
 import json
+import os
 from pathlib import Path
 import subprocess
 import shutil
@@ -7,7 +8,7 @@ import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parent
-FAKE_CLI = shutil.which('true')
+FAKE_CLI = sys.executable if os.name == 'nt' else shutil.which('true')
 
 
 class InstallTest(unittest.TestCase):
@@ -41,7 +42,14 @@ class InstallTest(unittest.TestCase):
             backups = sorted((home / '.gemini/control-kit-backups').iterdir())
             self.assertEqual(json.loads((backups[0] / 'config/hooks.json').read_text()), original)
             self.assertEqual((backups[0] / 'GEMINI.md').read_text(), 'Existing user rules\n')
-            self.assertEqual((home / '.local/bin/agy').resolve(), Path(FAKE_CLI).resolve())
+            if os.name == 'nt':
+                runtime = json.loads((config / 'hooks/runtime.json').read_text(encoding='utf-8'))
+                self.assertEqual(Path(runtime['agy']).resolve(), Path(FAKE_CLI).resolve())
+                self.assertFalse((home / '.local/bin/agy').exists())
+                self.assertIn('EncodedCommand', hooks.read_text())
+                self.assertFalse(list(config.rglob('*.pyc')))
+            else:
+                self.assertEqual((home / '.local/bin/agy').resolve(), Path(FAKE_CLI).resolve())
             self.run_install(home)
             text = rules.read_text()
             self.assertTrue(text.startswith('Existing user rules\n'))

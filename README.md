@@ -4,7 +4,9 @@ Bản xuất bộ kiểm soát đang dùng trên máy của HThanh, ngày **19/1
 
 ## Cài trên máy khác
 
-Hiện hỗ trợ **macOS/Linux**. Bộ hook dùng Bash, `fcntl`, process groups và POSIX signals; chưa hỗ trợ Windows native. WSL không đồng nghĩa hook sẽ được app Windows nạp.
+Nhánh này bổ sung **Windows native**: xem [hướng dẫn Windows](WINDOWS.md). Bản Windows dùng PowerShell, khóa file Windows và Job Objects; không cần Bash hoặc WSL. Installer dùng CLI đã có, không cài thêm CLI.
+
+Các bước bên dưới dành cho **macOS/Linux**, dùng Bash, `fcntl`, process groups và POSIX signals.
 
 1. Cài Antigravity và **AGY CLI chính thức**, đăng nhập riêng trên máy mới. Cần Python 3.9+, Bash, Git. Theo dõi GitHub CI cần `gh` và đăng nhập GitHub. Không chuyển token từ máy cũ.
 2. Tải repo và xem trước cấu hình:

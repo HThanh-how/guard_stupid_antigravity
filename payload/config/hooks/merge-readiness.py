@@ -6,7 +6,7 @@ import os
 from pathlib import Path
 import re
 import runpy
-import shlex
+import guard_platform as platform
 import subprocess
 import time
 from urllib.parse import urlsplit
@@ -29,14 +29,14 @@ def repository(value):
 def check(command, args, data, state):
     """Return None to allow or a factual denial; never mutate state or remote data."""
     try:
-        words = shlex.split(command)
+        words = platform.split(command)
     except ValueError:
         return 'Malformed command: merge readiness cannot determine the requested PR action.'
     # ponytail: shell heuristics cover visible gh commands, not opaque aliases/scripts.
     candidate = re.search(r'\bgh\b[\s\S]*\bpr\b[\s\S]*\b(?:merge|ready)\b', command + ' ' + ' '.join(words))
     if not candidate:
         return None
-    if (len(words) < 4 or Path(words[0]).name != 'gh' or words[1:3] not in (['pr', 'merge'], ['pr', 'ready'])
+    if (len(words) < 4 or platform.basename(words[0]) != 'gh' or words[1:3] not in (['pr', 'merge'], ['pr', 'ready'])
             or any(c in command for c in ('\n', ';', '&', '|', '<', '>', '`', '$'))):
         return 'Use standalone gh pr merge/ready with an explicit PR number or URL and repository Cwd; wrappers, expansion and compound commands cannot be verified.'
     operation = words[2]
@@ -119,7 +119,7 @@ def check(command, args, data, state):
         key = hashlib.sha256(conversation.encode()).hexdigest()
         receipt = Path.home() / '.gemini/config/hooks/readiness' / (key + '.json')
         try:
-            evidence = json.loads(receipt.read_text())
+            evidence = json.loads(receipt.read_text(encoding='utf-8'))
         except (OSError, ValueError):
             evidence = {}
         report = evidence.get('report', {})

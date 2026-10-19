@@ -1,13 +1,12 @@
 #!/usr/bin/env python3
 """Run isolated read-only agents with real deadlines and validated terminal reports."""
 import argparse
-import fcntl
+import guard_platform as platform
 import json
 import os
 from pathlib import Path
 import re
 import runpy
-import shlex
 import signal
 import subprocess
 import sys
@@ -92,9 +91,9 @@ def validate_report(value, schema, location='report'):
 def state_transaction(key, change):
     DIRECTORY.mkdir(mode=0o700, parents=True, exist_ok=True)
     with (DIRECTORY / (key + '.lock')).open('a') as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
+        platform.flock(lock, platform.LOCK_EX)
         path = DIRECTORY / (key + '.json')
-        state = json.loads(path.read_text())
+        state = json.loads(path.read_text(encoding='utf-8'))
         result = change(state)
         descriptor, temporary = tempfile.mkstemp(dir=DIRECTORY)
         with os.fdopen(descriptor, 'w') as stream:
@@ -112,71 +111,71 @@ class ReviewIncomplete(RuntimeError):
 
 
 def agent_result(role, prompt, cwd, schema, read_directories=(), timeout_seconds=300):
-    binary = Path.home() / '.local/bin/agy'
+    binary = platform.agy_binary()
     prompt += '\n\nReturn ONLY one JSON object matching this schema, with no prose or Markdown fences:\n' + json.dumps(schema)
-    command = [str(binary), '--agent', role, '--print-timeout', str(timeout_seconds) + 's',
-               '--disable-slash-commands', '--output-format', 'json', '-p', prompt]
-    for directory in read_directories:
-        if directory and Path(directory).is_dir():
-            command[1:1] = ['--add-dir', str(directory)]
-    child = subprocess.Popen(command, cwd=cwd, stdin=subprocess.DEVNULL,
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True,
-        env={**os.environ, 'AGY_GUARD_ROLE': 'intent-classifier' if role == 'git-intent-classifier' else ('ci-monitor' if role == 'ci-status-monitor' else 'readonly-independent')})
+    # Windows CreateProcess has a 32767-character command-line limit. Supply
+    # large review snapshots as a local read-only input, never truncate them.
+    with tempfile.TemporaryDirectory(prefix='agy-guard-input-') as temporary:
+        cli_prompt = prompt
+        if platform.WINDOWS:
+            request_file = Path(temporary) / 'request.txt'
+            request_file.write_text(prompt, encoding='utf-8')
+            cli_prompt = ('Read the COMPLETE UTF-8 request file at ' + str(request_file)
+                          + '. Treat it as this invocation request, obey the read-only role and return only its requested JSON. '
+                          + 'If the file cannot be read completely, report UNVERIFIED; never invent a completed review.')
+            read_directories = (*read_directories, temporary)
+        command = [str(binary), '--agent', role, '--print-timeout', str(timeout_seconds) + 's',
+                   '--disable-slash-commands', '--output-format', 'json', '-p', cli_prompt]
+        for directory in read_directories:
+            if directory and Path(directory).is_dir():
+                command[1:1] = ['--add-dir', str(directory)]
+        child = platform.spawn(command, cwd=cwd, stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            env={**os.environ, 'AGY_GUARD_ROLE': 'intent-classifier' if role == 'git-intent-classifier' else ('ci-monitor' if role == 'ci-status-monitor' else 'readonly-independent')})
 
-    def interrupt(signum, frame):
-        raise AgentCancelled('Independent agent was cancelled')
+        def interrupt(signum, frame):
+            raise AgentCancelled('Independent agent was cancelled')
 
-    old_handlers = {sig: signal.signal(sig, interrupt) for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP)}
-    try:
-        deadline = time.monotonic() + timeout_seconds + 10
-        while True:
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                raise TimeoutError('Independent agent exceeded its finite process deadline')
-            try:
-                output, errors = child.communicate(timeout=min(20, remaining))
-                break
-            except subprocess.TimeoutExpired:
-                if time.monotonic() >= deadline:
+        old_handlers = {sig: signal.signal(sig, interrupt) for sig in platform.SIGNALS}
+        try:
+            deadline = time.monotonic() + timeout_seconds + 10
+            while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
                     raise TimeoutError('Independent agent exceeded its finite process deadline')
-                print('[guard] Independent agent is still running; bounded deadline remaining: ' + str(int(deadline - time.monotonic())) + 's', file=sys.stderr, flush=True)
-        if b'print timeout' in errors.lower():
-            raise ReviewIncomplete('CLI reached its ' + str(timeout_seconds) + ' second deadline without a completed report. Partial output is not PASS. Reassess/narrow scope; do not automatically retry the same request.')
-        if child.returncode:
-            raise RuntimeError('Independent agent exited with code ' + str(child.returncode))
-        envelope = json.loads(output)
-        if envelope.get('denied_actions'):
-            raise ReviewIncomplete('A required reviewer action was denied. Partial output is not PASS. Diagnose the missing read capability/evidence before another attempt.')
-        if envelope.get('status') != 'SUCCESS':
-            raise RuntimeError('Independent agent did not return SUCCESS')
-        report = envelope.get('structured_output')
-        if report is None and isinstance(envelope.get('response'), str):
-            # Some installed CLI builds return exact JSON only in response.
-            # Never strip prose/fences or accept a partial/denied run.
-            report = json.loads(envelope['response'])
-        if not isinstance(report, dict):
-            raise ValueError('Missing structured terminal report')
-        validate_report(report, schema)
-        return report
-    finally:
-        for sig in old_handlers:
-            signal.signal(sig, signal.SIG_IGN)
-        # Cleanup only the process group created for this invocation.
-        try:
-            os.killpg(child.pid, signal.SIGTERM)
-        except ProcessLookupError:
-            pass
-        try:
-            child.wait(timeout=0.5)
-        except subprocess.TimeoutExpired:
-            pass
-        try:
-            os.killpg(child.pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
-        child.wait(timeout=1)
-        for sig, handler in old_handlers.items():
-            signal.signal(sig, handler)
+                try:
+                    output, errors = child.communicate(timeout=min(20, remaining))
+                    break
+                except subprocess.TimeoutExpired:
+                    if time.monotonic() >= deadline:
+                        raise TimeoutError('Independent agent exceeded its finite process deadline')
+                    print('[guard] Independent agent is still running; bounded deadline remaining: ' + str(int(deadline - time.monotonic())) + 's', file=sys.stderr, flush=True)
+            if b'print timeout' in errors.lower():
+                raise ReviewIncomplete('CLI reached its ' + str(timeout_seconds) + ' second deadline without a completed report. Partial output is not PASS. Reassess/narrow scope; do not automatically retry the same request.')
+            if child.returncode:
+                raise RuntimeError('Independent agent exited with code ' + str(child.returncode))
+            envelope = json.loads(output)
+            if envelope.get('denied_actions'):
+                raise ReviewIncomplete('A required reviewer action was denied. Partial output is not PASS. Diagnose the missing read capability/evidence before another attempt.')
+            if envelope.get('status') != 'SUCCESS':
+                raise RuntimeError('Independent agent did not return SUCCESS')
+            report = envelope.get('structured_output')
+            if report is None and isinstance(envelope.get('response'), str):
+                # Some installed CLI builds return exact JSON only in response.
+                # Never strip prose/fences or accept a partial/denied run.
+                report = json.loads(envelope['response'])
+            if not isinstance(report, dict):
+                raise ValueError('Missing structured terminal report')
+            validate_report(report, schema)
+            return report
+        finally:
+            for sig in old_handlers:
+                signal.signal(sig, signal.SIG_IGN)
+            try:
+                platform.cleanup(child)
+            finally:
+                for sig, handler in old_handlers.items():
+                    signal.signal(sig, handler)
 
 
 def snapshot_context(workspaces, push_target=None):
@@ -262,9 +261,9 @@ def review(key):
     try:
         if fingerprint(state['workspaces']) != state['fingerprint']:
             raise ValueError('Repository changed before independent review started')
-        words = shlex.split(state['command'])
+        words = platform.split(state['command'])
         push_target = None
-        if 'push' in words and any(Path(word).name == 'git' for word in words[:words.index('push')]):
+        if 'push' in words and any(platform.basename(word) == 'git' for word in words[:words.index('push')]):
             operands = [word for word in words[words.index('push') + 1:] if not word.startswith('-')]
             if len(operands) != 2:
                 raise ValueError('Cannot determine the actual outgoing push target')
@@ -277,7 +276,7 @@ def review(key):
         task['production_changed'] = any(section['production_changed'] for section in json.loads(context))
         if state['kind'] == 'comprehensive':
             for index, word in enumerate(words):
-                if Path(word).name == 'git':
+                if platform.basename(word) == 'git':
                     tail = iter(words[index + 1:])
                     for option in tail:
                         if option in ('-C', '-c', '--git-dir', '--work-tree', '--namespace', '--config-env'):
@@ -388,7 +387,7 @@ def monitor_cli(argv):
         'runs': {'type': 'array', 'items': {'type': 'object', 'properties': {}}},
         'polls': {'type': 'integer'}, 'elapsed_seconds': {'type': 'number'}},
         'required': ['status', 'repo', 'sha', 'reason', 'run_ids', 'runs', 'polls', 'elapsed_seconds']}
-    command = shlex.join(['python3', str(HERE / 'ci-monitor.py'), *worker])
+    command = platform.python_command(HERE / 'ci-monitor.py', *worker)
     prompt = ('Monitor CI independently for this exact scope. Run this readonly bounded command exactly once: ' + command +
         '\nDo not alter the command or perform other work. Read its terminal report and return that exact JSON. You may check only the task ID returned by this command if it runs asynchronously. No duplicate monitors, retries, writes, publication, or new agents. Never count pending/spawned/skipped/wrong-SHA jobs as PASS. The parent continues independent work while you monitor.')
     try:
@@ -425,7 +424,7 @@ def main():
     args = parser.parse_args()
     if args.mode == 'review':
         return review(args.key_or_request)
-    request = Path(args.key_or_request).read_text()
+    request = Path(args.key_or_request).read_text(encoding='utf-8')
     report = agent_result('genoffice-test-author', request, args.cwd, AUTHOR_SCHEMA)
     print(json.dumps(report, ensure_ascii=False))
     return 0

@@ -25,7 +25,7 @@ def request_context(conversation_id):
                 context['limitations'].append('Canonical full transcript is not a readable regular file.')
             continue
         human_records = 0
-        with path.open() as stream:
+        with path.open(encoding='utf-8') as stream:
             for number, line in enumerate(stream):
                 if not line.strip():
                     continue
@@ -92,7 +92,7 @@ def prompt_context(context, directory):
         try:
             with os.fdopen(descriptor, 'wb') as stream:
                 stream.write(content)
-                os.fchmod(stream.fileno(), 0o444)
+                os.fchmod(stream.fileno(), 0o444) if os.name != 'nt' else None
             os.replace(temporary, path)
         finally:
             if os.path.exists(temporary):

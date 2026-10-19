@@ -3,20 +3,20 @@
 import fnmatch
 import os
 from pathlib import Path
-import shlex
+import guard_platform as platform
 import subprocess
 
 PROTECTED = ('main', 'master', 'develop', 'dev', 'production', 'prod', 'staging', 'release', 'release/*', 'releases/*')
 
 
 def check(command, arguments, workspaces):
-    words = shlex.split(command)
+    words = platform.split(command)
     cwd = Path(arguments.get('Cwd') or arguments.get('cwd') or arguments.get('working_directory') or (workspaces[0] if workspaces else os.getcwd()))
     if len(words) > 3 and words[0] == 'cd' and words[2] == '&&':
         cwd = (cwd / words[1]).resolve()
         words = words[3:]
-    if not words or Path(words[0]).name != 'git':
-        if any(Path(word).name == 'git' for word in words) and any(word in ('commit', 'push') for word in words):
+    if not words or platform.basename(words[0]) != 'git':
+        if any(platform.basename(word) == 'git' for word in words) and any(word in ('commit', 'push') for word in words):
             return 'Use a standalone git commit/push command with explicit Cwd; wrappers and command-local Git environment cannot be branch-verified.'
         return None
     index = 1
@@ -76,7 +76,7 @@ def check(command, arguments, workspaces):
             operands.append(word)
     remotes = git('remote').splitlines()
     example_remote = 'origin' if 'origin' in remotes else (remotes[0] if remotes else 'origin')
-    example = 'git push --no-follow-tags -u ' + shlex.quote(example_remote) + ' ' + shlex.quote('HEAD:refs/heads/' + branch)
+    example = 'git push --no-follow-tags -u ' + platform.quote(example_remote) + ' ' + platform.quote('HEAD:refs/heads/' + branch)
     if len(operands) != 2 or operands[0] not in remotes:
         return 'Specify one configured remote and one explicit working-branch target. Use: ' + example
     for config_key in ('push.followTags', 'remote.' + operands[0] + '.mirror'):

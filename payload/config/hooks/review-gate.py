@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """Antigravity review gates. State is private and scoped to a conversation."""
 import hashlib
-import fcntl
+import base64
+import guard_platform as platform
 import json
 import os
 from pathlib import Path
 import re
 import runpy
-import shlex
 import subprocess
 import sys
 import signal
@@ -28,7 +28,7 @@ def command_signature(arguments, retry_budget=False):
         # Approval identity must preserve shell quoting/expansion semantics.
         for field in ('CommandLine', 'command'):
             if isinstance(execution.get(field), str):
-                execution[field] = shlex.join(shlex.split(execution[field]))
+                execution[field] = platform.join(platform.split(execution[field]))
     return hashlib.sha256(json.dumps(execution, sort_keys=True).encode()).hexdigest()
 
 
@@ -71,8 +71,9 @@ def main():
     event = sys.argv[1]
     def expired(signum, frame):
         raise TimeoutError('Hook exceeded its own 8 second execution budget')
-    signal.signal(signal.SIGALRM, expired)
-    signal.setitimer(signal.ITIMER_REAL, 8)
+    if not platform.WINDOWS:
+        signal.signal(signal.SIGALRM, expired)
+        signal.setitimer(signal.ITIMER_REAL, 8)
     data = json.load(sys.stdin)
     if event == 'pre' and os.environ.get('AGY_GUARD_ROLE') == 'intent-classifier':
         name = data.get('toolCall', {}).get('name', '')
@@ -86,9 +87,11 @@ def main():
             allowed = data['toolCall'].get('args', {}).get('Action') == 'status'
         if name == 'run_command':
             raw = data['toolCall'].get('args', {})
-            words = shlex.split(raw.get('CommandLine') or raw.get('command') or '')
+            words = platform.split(raw.get('CommandLine') or raw.get('command') or '')
+            if words[1:3] == ['-X', 'utf8']:
+                words = words[:1] + words[3:]
             helper = str(Path(__file__).with_name('ci-monitor.py'))
-            allowed = (len(words) >= 2 and Path(words[0]).name in ('python3', 'python') and words[1] == helper
+            allowed = (len(words) >= 2 and platform.basename(words[0]) in ('python3', 'python') and words[1] == helper
                        and not any(token in (';', '&&', '||', '|', '&', '>', '<') for token in words)
                        and not any(mark in (raw.get('CommandLine') or raw.get('command') or '') for mark in ('\n', '$(', '`')))
             if allowed:
@@ -111,9 +114,9 @@ def main():
     directory.mkdir(mode=0o700, parents=True, exist_ok=True)
     key = hashlib.sha256(conv.encode()).hexdigest()
     lock = (directory / (key + '.lock')).open('a')
-    fcntl.flock(lock, fcntl.LOCK_EX)
+    platform.flock(lock, platform.LOCK_EX)
     path = directory / (key + '.json')
-    state = json.loads(path.read_text()) if path.exists() else {}
+    state = json.loads(path.read_text(encoding='utf-8')) if path.exists() else {}
     if (state.get('kind') == 'test integrity' and state.get('status') in ('pending', 'queued', 'blocked')
             and state.get('command') and not runpy.run_path(str(Path(__file__).with_name('test-command.py')))['is_test_command'](state['command'])):
         state = {}  # Retire an old false-positive gate; this grants no test/Git action.
@@ -196,8 +199,8 @@ def main():
                 path.write_text(json.dumps(state))
                 print(json.dumps({'decision': 'deny', 'reason': merge_error}))
                 return
-            normalized_ci = ' '.join(shlex.split(command))
-            if matches(r'\bgh\s+run\s+(?:list|view|watch)\b|\bgh\s+pr\s+checks\b[^\n]*--watch\b', normalized_ci):
+            normalized_ci = ' '.join(platform.split(command))
+            if matches(r'\bgh(?:\.exe)?\s+run\s+(?:list|view|watch)\b|\bgh(?:\.exe)?\s+pr\s+checks\b[^\n]*--watch\b', normalized_ci):
                 print(json.dumps({'decision': 'deny', 'reason': 'Delegate CI status polling to one bounded readonly ci-status-monitor via independent-agent.py ci-monitor --repo owner/repo --sha <exact HEAD> --run-id <id> --cwd <repo> --seconds 600. Run asynchronously with WaitMsBeforeAsync <= 1000, continue independent implementation work, and consume its terminal report. Omit run-id for one readonly discovery at this SHA. Do not duplicate polling, change branches while it runs, wait indefinitely, or restart the same timed-out monitor automatically. Report any failed job IDs/URLs so the user can inspect them; never infer success from status polling.'}))
                 return
             branch_check = runpy.run_path(str(Path(__file__).with_name('git-branch-policy.py')))['check']
@@ -205,18 +208,20 @@ def main():
             if branch_error:
                 print(json.dumps({'decision': 'deny', 'reason': branch_error}))
                 return
-            if matches(r'\bgit\s+(push\b[^\n]*(?:--force|-f\b)|reset\s+--hard|rebase\s+-i|stash\s+(?:drop|clear)|branch\s+-[Dd]\s|tag\s+-d\s)', command):
+            if matches(r'\bgit(?:\.exe)?\s+(push\b[^\n]*(?:--force|-f\b)|reset\s+--hard|rebase\s+-i|stash\s+(?:drop|clear)|branch\s+-[Dd]\s|tag\s+-d\s)', command):
                 result = {'decision': 'force_ask', 'reason': 'Lệnh Git nguy hiểm cần phê duyệt: ' + command}
-            elif matches(r'\brm\s+[^\n]*(?:-rf?\b|--force)[^\n]*(?:migration|backup|\.db|schema|fixture)', command):
+            elif (matches(r'\brm\s+[^\n]*(?:-rf?\b|--force)[^\n]*(?:migration|backup|\.db|schema|fixture)', command)
+                  or (platform.WINDOWS and matches(r'\b(?:Remove-Item|rm|del|erase|rmdir|rd)\b[^\n]*(?:migration|backup|\.db|schema|fixture)', command)
+                      and matches(r'-(?:Recurse|Force)\b|/[sq]\b', command))):
                 result = {'decision': 'deny', 'reason': 'Xoá migration/backup/schema bị chặn: ' + command}
             if result['decision'] != 'deny':
                 # ponytail: command heuristics cover common runners; opaque custom wrappers need explicit naming.
-                normalized = ' '.join(shlex.split(command))
-                words = shlex.split(command)
+                normalized = ' '.join(platform.split(command))
+                words = platform.split(command)
                 git_gate = False
                 git_operation = None
                 for index, word in enumerate(words):
-                    if Path(word).name != 'git':
+                    if platform.basename(word) != 'git':
                         continue
                     skip_value = False
                     for option in words[index + 1:]:
@@ -233,15 +238,17 @@ def main():
                     if git_gate:
                         break
                 # Detect nested shell commands too; these are rejected below.
-                git_gate = git_gate or matches(r'\bgit\s+(?:add|commit|push)\b', normalized)
+                git_gate = git_gate or matches(r'\bgit(?:\.exe)?\s+(?:add|commit|push)\b', normalized)
                 test_gate = runpy.run_path(str(Path(__file__).with_name('test-command.py')))['is_test_command'](command)
                 waived = git_operation in runpy.run_path(str(Path(__file__).with_name('user-priority.py')))['git_review_waiver'](data)
                 signature = command_signature(args)
                 retry_signature = command_signature(args, retry_budget=True)
                 if git_gate or test_gate:
-                    lexer = shlex.shlex(command, posix=True, punctuation_chars=';&|<>')
+                    lexer = platform.lexer(command, ';&|<>')
                     lexer.whitespace_split = True
                     parts = list(lexer)
+                    if platform.WINDOWS and parts[:1] == ['&']:
+                        parts = parts[1:]
                     if len(parts) > 3 and parts[0] == 'cd' and parts[2] == '&&':
                         parts = parts[3:]
                     unsafe = (any(token and all(c in ';&|<>' for c in token) for token in parts)
@@ -249,6 +256,8 @@ def main():
                               or any(matches(r'^GIT_(?:DIR|WORK_TREE|INDEX_FILE|CONFIG[^=]*)=', word) for word in words)
                               or (git_gate and any(word in ('--config-env', '--force') or word.startswith(('-c', '--git-dir', '--work-tree', '--config-env=', '--config=')) or (word.startswith('-') and not word.startswith('--') and 'f' in word[1:]) for word in words))
                               or matches(r'\b(?:bash|sh|zsh|eval)\s+(?:-\S*\s+)*-c\b', command))
+                    unsafe = unsafe or (platform.WINDOWS and any(mark in command for mark in ('$', '`', '--%')) )
+                    unsafe = unsafe or (platform.WINDOWS and platform.basename(words[0]) in ('powershell', 'pwsh', 'cmd'))
                     if unsafe:
                         print(json.dumps({'decision': 'deny', 'reason': 'Run tests or git add/commit/push as a standalone command (an initial cd is allowed). Split mutating prefixes, pipes, redirection and nested shells; use git -C instead of alternate Git directories/index/config and do not force-add ignored files, so the review covers the repository that actually executes.'}))
                         return
@@ -278,9 +287,9 @@ def main():
                                     cwd = (cwd / word[2:]).resolve()
                                     targets.append(str(cwd))
                             state['workspaces'] = list(dict.fromkeys(targets + state['workspaces']))
-                        result = {'decision': 'deny', 'reason': 'REVIEW REQUIRED: ' + state['kind'] + '. ' + (state.get('failure', '') + ' Stop and report BLOCKED; do not keep polling.' if state.get('status') == 'blocked' else 'Immediately run this standalone bounded read-only reviewer command: ' + shlex.join(['python3', str(Path(__file__).with_name('independent-agent.py')), 'review', key]) + ' . Working directory: ' + state['workspaces'][0] + '. Wait for the complete report, address findings, then retry this exact original command. The next invocation prepares the review; spawn success alone is never approval.')}
+                        result = {'decision': 'deny', 'reason': 'REVIEW REQUIRED: ' + state['kind'] + '. ' + (state.get('failure', '') + ' Stop and report BLOCKED; do not keep polling.' if state.get('status') == 'blocked' else 'Immediately run this standalone bounded read-only reviewer command: ' + platform.python_command(Path(__file__).with_name('independent-agent.py'), 'review', key) + ' . Working directory: ' + state['workspaces'][0] + '. Wait for the complete report, address findings, then retry this exact original command. The next invocation prepares the review; spawn success alone is never approval.')}
                         if git_gate:
-                            result['reason'] = 'Before starting/restarting review, if the real user has already directly authorized Git, interpret that natural instruction once with: ' + shlex.join(['python3', str(Path(__file__).with_name('authorize-git.py')), key]) + ' . It has a 20 second CLI / 30 second process limit and caches the result. Read the operation list: permission for commit NEVER grants push. Never demand an exact permission phrase or rerun failed classification automatically. Protected-branch and command-safety checks still apply. If the requested operation is not authorized, retain the normal review gate: ' + result['reason']
+                            result['reason'] = 'Before starting/restarting review, if the real user has already directly authorized Git, interpret that natural instruction once with: ' + platform.python_command(Path(__file__).with_name('authorize-git.py'), key) + ' . It has a 20 second CLI / 30 second process limit and caches the result. Read the operation list: permission for commit NEVER grants push. Never demand an exact permission phrase or rerun failed classification automatically. Protected-branch and command-safety checks still apply. If the requested operation is not authorized, retain the normal review gate: ' + result['reason']
                 elif state.get('status') == 'reviewed':
                     state = {}  # An intervening command may mutate files: require a fresh review.
     elif event == 'dispatch' and state.get('status') == 'pending':
@@ -323,11 +332,15 @@ Return: baseline used; files reviewed; findings ranked by severity with file/lin
     if event == 'pre' and tool == 'run_command' and result.get('decision') != 'deny' and command:
         field = 'CommandLine' if args.get('CommandLine') else 'command'
         limits_path = Path(__file__).with_name('command-limits.json')
-        limits = json.loads(limits_path.read_text()) if limits_path.exists() else {'seconds': 600, 'idle': 180}
+        limits = json.loads(limits_path.read_text(encoding='utf-8')) if limits_path.exists() else {'seconds': 600, 'idle': 180}
         seconds, idle = limits['seconds'], limits['idle']
         if not isinstance(seconds, (int, float)) or not isinstance(idle, (int, float)) or not 0 < seconds <= 3600 or not 0 <= idle <= seconds:
             raise ValueError('Invalid finite command deadlines')
-        wrapper = shlex.join(['python3', str(Path(__file__).with_name('bounded-command.py')), '--seconds', str(seconds), '--idle', str(idle), '--', command])
+        arguments = ['--seconds', seconds, '--idle', idle]
+        if platform.WINDOWS:
+            arguments.append('--encoded')
+            command = base64.b64encode(command.encode('utf-8')).decode('ascii')
+        wrapper = platform.portable_command(platform.python_command(Path(__file__).with_name('bounded-command.py'), *arguments, '--', command))
         result['overwrite'] = {field: wrapper}
 
     if state:

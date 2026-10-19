@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """Recognize common test invocations, not incidental test names in read commands."""
 import ast
+import base64
 from pathlib import PurePath
 import re
-import shlex
+import guard_platform as platform
 
-RUNNERS = {'pytest', 'py.test', 'vitest', 'jest', 'mocha', 'ava', 'playwright', 'cypress', 'ctest', 'phpunit', 'rspec', 'nosetests'}
+RUNNERS = {'pytest', 'py.test', 'vitest', 'jest', 'mocha', 'ava', 'playwright', 'cypress', 'ctest', 'phpunit', 'rspec', 'nosetests', 'invoke-pester'}
 MANAGERS = {'npm', 'pnpm', 'yarn', 'bun'}
 
 
@@ -28,7 +29,7 @@ def invocation(words):
         words = words[1:]
     if not words:
         return False
-    name = PurePath(words[0]).name
+    name = platform.basename(words[0])
     args = words[1:]
     if name in ('env', 'command', 'exec', 'nohup'):
         while args and (args[0].startswith('-') or re.match(r'^[A-Za-z_][A-Za-z0-9_]*=', args[0])):
@@ -39,8 +40,15 @@ def invocation(words):
         while args and args[0].startswith('-'):
             args = args[2:] if args[0] in ('-k', '--kill-after', '-s', '--signal') else args[1:]
         return invocation(args[1:]) if args else False
-    if name in ('sh', 'bash', 'zsh'):
-        index = next((i for i, arg in enumerate(args) if re.fullmatch(r'-[A-Za-z]*c[A-Za-z]*', arg)), None)
+    if name in ('sh', 'bash', 'zsh', 'pwsh', 'powershell', 'cmd'):
+        if name in ('pwsh', 'powershell'):
+            encoded = next((i for i, arg in enumerate(args) if arg.lower() in ('-encodedcommand', '-enc')), None)
+            if encoded is not None:
+                try:
+                    return is_test_command(base64.b64decode(args[encoded + 1], validate=True).decode('utf-16-le'))
+                except (ValueError, IndexError, UnicodeError):
+                    return False
+        index = next((i for i, arg in enumerate(args) if (re.fullmatch(r'-[A-Za-z]*c[A-Za-z]*', arg) or arg.lower() in ('-command', '/c'))), None)
         if index is not None:
             return is_test_command(args[index + 1]) if index + 1 < len(args) else False
     if name in RUNNERS or name.split('@', 1)[0] in RUNNERS:
@@ -88,13 +96,16 @@ def invocation(words):
         # as readFileSync('vitest.config.ts') must not be treated as execution.
         return False
     if re.fullmatch(r'python[\d.]*|node|nodejs|sh|bash|zsh', name):
+        if re.fullmatch(r'python[\d.]*', name):
+            args = strip_options(args, {'-X', '-W'})
         script = next((arg for arg in args if not arg.startswith('-')), '')
         return bool(script) and test_script(script)
-    return (words[0].startswith(('./', '/')) and test_script(words[0]))
+    return ((words[0].startswith(('./', '/', '.\\')) or (platform.WINDOWS and PurePath(words[0]).is_absolute()))
+            and test_script(words[0]))
 
 
 def is_test_command(command):
-    lexer = shlex.shlex(command, posix=True, punctuation_chars='();&|\n')
+    lexer = platform.lexer(command, '();&|\n')
     lexer.whitespace = ' \t\r'
     lexer.whitespace_split = True
     segment = []

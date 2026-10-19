@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Interpret an actual human Git authorization once; never perform Git writes."""
-import fcntl
+import guard_platform as platform
 import json
 from pathlib import Path
 import re
@@ -29,7 +29,7 @@ def classify_message(text, cwd):
 def resolve(key):
     if not re.fullmatch(r'[a-f0-9]{64}', key):
         raise ValueError('Invalid originating review key')
-    state = json.loads((Path.home() / '.gemini/config/hooks/state' / (key + '.json')).read_text())
+    state = json.loads((Path.home() / '.gemini/config/hooks/state' / (key + '.json')).read_text(encoding='utf-8'))
     data = {'conversationId': state['conversation_id'], 'workspacePaths': state['workspaces'],
             'toolCall': {'args': state['arguments']}}
     priority = runpy.run_path(str(HERE / 'user-priority.py'))
@@ -52,13 +52,13 @@ def resolve(key):
     path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     with path.with_suffix('.lock').open('a') as lock:
         try:
-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            platform.flock(lock, platform.LOCK_EX | platform.LOCK_NB)
         except BlockingIOError:
             print('Authorization interpretation is already in progress; do not start another.')
             return 1
         if path.exists():
             operations = priority['cached_authorization'](data, request)
-            saved = json.loads(path.read_text())
+            saved = json.loads(path.read_text(encoding='utf-8'))
             print('Cached human authorization: ' + ', '.join(sorted(operations)) if operations else
                   'Authorization unavailable: ' + saved.get('report', {}).get('reason', 'No valid current grant') + '. Do not automatically retry; use one explained native approval question if needed.')
             return 0 if operations else 1

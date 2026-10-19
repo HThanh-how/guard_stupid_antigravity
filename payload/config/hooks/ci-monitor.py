@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Bounded read-only GitHub Actions polling. This deterministic worker is not AI."""
 import argparse
-import fcntl
+import guard_platform as platform
 import hashlib
 import json
 import os
@@ -18,8 +18,8 @@ class MonitorCancelled(Exception):
 
 
 def gh_json(arguments, timeout):
-    child = subprocess.Popen(['gh', *arguments], stdin=subprocess.DEVNULL,
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True,
+    child = platform.spawn(['gh', *arguments], stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
         env={**os.environ, 'GH_PROMPT_DISABLED': '1', 'GH_PAGER': 'cat', 'NO_COLOR': '1'})
     try:
         output, _ = child.communicate(timeout=timeout)
@@ -28,19 +28,9 @@ def gh_json(arguments, timeout):
         return json.loads(output)
     finally:
         handlers = {sig: signal.signal(sig, signal.SIG_IGN)
-                    for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP)}
+                    for sig in platform.SIGNALS}
         try:
-            for sig in (signal.SIGTERM, signal.SIGKILL):
-                try:
-                    os.killpg(child.pid, sig)
-                except ProcessLookupError:
-                    break
-                if sig == signal.SIGTERM:
-                    try:
-                        child.wait(timeout=0.1)
-                    except subprocess.TimeoutExpired:
-                        pass
-            child.wait(timeout=1)
+            platform.cleanup(child)
         finally:
             for sig, handler in handlers.items():
                 signal.signal(sig, handler)
@@ -63,7 +53,7 @@ def monitor(repo, sha, run_ids=None, seconds=600, interval=15, command_seconds=1
     key = hashlib.sha256((repo + ':' + sha.lower()).encode()).hexdigest()
     with (directory / (key + '.lock')).open('a') as lock:
         try:
-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            platform.flock(lock, platform.LOCK_EX | platform.LOCK_NB)
         except BlockingIOError:
             return {'status': 'BLOCKED', 'repo': repo, 'sha': sha.lower(), 'run_ids': list(run_ids),
                     'runs': [], 'polls': 0, 'elapsed_seconds': 0,
@@ -165,7 +155,7 @@ def main():
     args = parse_args()
     def cancel(signum, frame):
         raise MonitorCancelled()
-    for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+    for sig in platform.SIGNALS:
         signal.signal(sig, cancel)
     report = monitor(args.repo, args.sha, args.run_id, args.seconds, args.interval, args.command_seconds)
     print(json.dumps(report))
