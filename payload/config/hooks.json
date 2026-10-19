@@ -1,0 +1,51 @@
+{
+  "genoffice-agent-guard": {
+    "PreToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.gemini/config/hooks/genoffice-guard.sh",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  },
+  "test-integrity-reviewer": {
+    "PostInvocation": [
+      {
+        "type": "command",
+        "command": "~/.gemini/config/hooks/test-integrity-reviewer.sh",
+        "timeout": 15
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "run_command|invoke_subagent",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ~/.gemini/config/hooks/review-gate.py post",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "type": "command",
+        "command": "python3 ~/.gemini/config/hooks/review-gate.py stop",
+        "timeout": 10
+      }
+    ],
+    "PreInvocation": [
+      {
+        "type": "command",
+        "command": "~/.gemini/config/hooks/test-integrity-reviewer.sh",
+        "timeout": 10
+      }
+    ]
+  }
+}

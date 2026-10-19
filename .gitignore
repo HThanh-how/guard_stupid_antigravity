@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+.DS_Store
+.venv/
+*.log
+.gemini/
+payload/config/config.json
+payload/config/mcp_config.json
+payload/config/hooks/state/
+payload/config/hooks/authorization/
+payload/config/hooks/backups/
+payload/config/hooks/ci-monitor/
+payload/config/hooks/task-evidence/
