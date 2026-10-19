@@ -98,6 +98,31 @@ class AttentionTest(unittest.TestCase):
         self.assertEqual(MODULE['gate'](self.data)['decision'], 'deny')
         self.assertIsNone(MODULE['gate'](self.data))
 
+    def test_native_tool_response_content_is_hidden_and_cannot_clear_checkpoint(self):
+        self.pending()
+        self.record('MODEL', 'PLANNER_RESPONSE', 'Agent đang kiểm tra ảnh giao diện.',
+                    tool_calls=[{'name': 'run_command', 'args': {'CommandLine': 'assessment'}}])
+        self.answer('Đang tiến hành đánh giá phản hồi.')
+        self.assertEqual(MODULE['context']('demo')['replies'], ['Đang tiến hành đánh giá phản hồi.'])
+        self.assertEqual(self.assess(self.report()), 1)
+
+    def test_reply_arriving_after_assessment_started_cannot_supply_its_evidence(self):
+        self.pending()
+        def arrive(*args, **kwargs):
+            self.answer('Agent đang kiểm tra ảnh giao diện.')
+            return self.report()
+        with patch('runpy.run_path', return_value={'agent_result': arrive}):
+            self.assertEqual(MODULE['assess']('demo'), 1)
+
+    def test_old_receipt_with_hidden_evidence_is_rejected(self):
+        self.pending()
+        path = MODULE['state_path']('demo')
+        state = json.loads(path.read_text())
+        state['report'] = self.report()
+        MODULE['save'](path, state)
+        self.assertEqual(MODULE['gate'](self.data)['decision'], 'deny')
+        self.assertNotIn('report', json.loads(path.read_text()))
+
     def test_timeout_is_not_pass_and_does_not_create_retry_or_stop_loop(self):
         self.pending()
         with patch('runpy.run_path', return_value={'agent_result': lambda *a, **k: (_ for _ in ()).throw(TimeoutError())}) as runner:

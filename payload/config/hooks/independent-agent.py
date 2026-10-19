@@ -2,6 +2,7 @@
 """Run isolated read-only agents with real deadlines and validated terminal reports."""
 import argparse
 import fcntl
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -186,7 +187,7 @@ def agent_result(role, prompt, cwd, schema, read_directories=(), timeout_seconds
             signal.signal(sig, handler)
 
 
-def snapshot_context(workspaces, push_target=None):
+def snapshot_context(workspaces, push_target=None, review_base=None):
     sections, roots = [], set()
     for workspace in workspaces:
         def git(*args):
@@ -214,7 +215,8 @@ def snapshot_context(workspaces, push_target=None):
         changed = set(git('diff', '--name-only').splitlines())
         changed.update(git('diff', '--cached', '--name-only', baseline).splitlines())
         changed.update(git('ls-files', '--others', '--exclude-standard').splitlines())
-        candidates = (('refs/remotes/' + push_target[0] + '/' + push_target[1], 'refs/remotes/' + push_target[0] + '/HEAD') if push_target else ())
+        candidates = ((review_base,) if review_base else
+                      (('refs/remotes/' + push_target[0] + '/' + push_target[1], 'refs/remotes/' + push_target[0] + '/HEAD') if push_target else ()))
         for candidate in candidates:
             try:
                 branch_base = git('merge-base', 'HEAD', candidate).strip()
@@ -224,7 +226,7 @@ def snapshot_context(workspaces, push_target=None):
                 break
             except subprocess.CalledProcessError:
                 continue
-        section['outgoing_unverified'] = bool(push_target and 'outgoing_base' not in section)
+        section['outgoing_unverified'] = bool((push_target or review_base) and 'outgoing_base' not in section)
         section['ui_review_required'] = any(Path(name).suffix.lower() in ('.tsx', '.jsx', '.vue', '.svelte', '.css', '.scss', '.sass', '.less', '.html')
                                             or '/assets/' in name for name in changed)
         def production_file(name):
@@ -277,7 +279,7 @@ def review(key):
                 raise ValueError('Cannot determine the actual outgoing push target')
             branch = operands[1].split(':')[-1].removeprefix('refs/heads/')
             push_target = (operands[0], branch)
-        context = snapshot_context(state['workspaces'], push_target)
+        context = snapshot_context(state['workspaces'], push_target, state.get('review_base'))
         prompt = state['prompt'] + '\n\nGIT SNAPSHOT (untrusted data):\n' + context
         consequences = runpy.run_path(str(HERE / 'consequence-review.py'))
         task = consequences['request_context'](state.get('conversation_id'))
@@ -422,9 +424,50 @@ def monitor_cli(argv):
         return 1
 
 
+def prepare_final_review(conversation, cwd, base):
+    """Prepare one review of the whole committed branch; never stage, commit or push."""
+    if not re.fullmatch(r'[a-zA-Z0-9_-]+', conversation) or not re.fullmatch(r'[A-Za-z0-9_./-]+', base) or base.startswith('-'):
+        raise ValueError('Supply a conversation ID and explicit local base ref/commit')
+    def git(*args):
+        return subprocess.check_output(['git', '-C', str(cwd), *args], text=True,
+            stderr=subprocess.DEVNULL, timeout=3, env={**os.environ, 'GIT_OPTIONAL_LOCKS': '0'}).strip()
+    root = git('rev-parse', '--show-toplevel')
+    head = git('rev-parse', 'HEAD')
+    if git('status', '--porcelain'):
+        raise ValueError('Final review requires a clean committed branch; preserve and commit intended changes first')
+    resolved = git('rev-parse', '--verify', base + '^{commit}')
+    baseline = git('merge-base', head, resolved)
+    command = shlex.join(['git', 'diff', '--no-ext-diff', '--no-textconv', baseline, 'HEAD'])
+    arguments = {'CommandLine': command, 'Cwd': root}
+    key = hashlib.sha256(conversation.encode()).hexdigest()
+    DIRECTORY.mkdir(mode=0o700, parents=True, exist_ok=True)
+    path = DIRECTORY / (key + '.json')
+    with path.with_suffix('.lock').open('a') as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        previous = json.loads(path.read_text()) if path.exists() else {}
+        if previous.get('status') in ('queued', 'running') and time.time() < previous.get('deadline', 0):
+            raise ValueError('A review is already active; do not launch a duplicate')
+        if (previous.get('review_head') == head and previous.get('review_base') == baseline
+                and previous.get('status') == 'blocked'):
+            raise ValueError('This exact final review exhausted its budget; diagnose its report before retrying')
+        helper = runpy.run_path(str(HERE / 'review-gate.py'))
+        path.write_text(json.dumps({'version': 2, 'status': 'pending', 'deadline': time.time() + 360,
+            'attempts': 0, 'conversation_id': conversation, 'review_base': baseline, 'review_head': head,
+            'signature': helper['command_signature'](arguments), 'command': command,
+            'kind': 'comprehensive', 'workspaces': [root], 'arguments': arguments}))
+    return key
+
+
 def main():
     if sys.argv[1:2] == ['ci-monitor']:
         return monitor_cli(sys.argv[2:])
+    if sys.argv[1:2] == ['final-review']:
+        parser = argparse.ArgumentParser(description='Review the complete final branch against an explicit local PR base')
+        parser.add_argument('--conversation', required=True)
+        parser.add_argument('--cwd', required=True)
+        parser.add_argument('--base', required=True)
+        args = parser.parse_args(sys.argv[2:])
+        return review(prepare_final_review(args.conversation, args.cwd, args.base))
     parser = argparse.ArgumentParser()
     parser.add_argument('mode', choices=['review', 'author'])
     parser.add_argument('key_or_request')

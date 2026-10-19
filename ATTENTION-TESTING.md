@@ -2,7 +2,7 @@
 
 ## Kết quả
 
-- 16 kiểm tra offline: transcript người dùng thật so với nội dung model, câu hỏi chen ngang, bằng chứng trả lời, tin mới đến trong lúc đánh giá, giữ câu hỏi qua lời “tiếp đi”, partial/ETA thiếu, một bước đọc đúng scope, timeout, deadline, chống lặp cùng input, tool `finish`, và PreToolUse thực tế.
+- 19 kiểm tra offline: transcript người dùng thật so với nội dung model, câu hỏi chen ngang, bằng chứng trả lời, tin mới đến trong lúc đánh giá, giữ câu hỏi qua lời “tiếp đi”, partial/ETA thiếu, một bước đọc đúng scope, timeout, deadline, chống lặp cùng input, tool `finish`, và PreToolUse thực tế.
 - Hai kiểm tra installer: dry-run, backup/merge và cài lại không nhân đôi policy.
 - Các regression có sẵn `check-review-gate.py`, `check-agent-monitor.py`: PASS.
 - Bốn lượt AI thật, mỗi lượt chỉ một tình huống, tối đa 20 giây CLI + deadline process ngoài: PASS.
@@ -44,3 +44,7 @@ python3 attention_live_cases.py --live --case eta-needs-basis-not-a-promise
 ```
 
 Không chạy lại cùng trường hợp tự động nếu timeout. Lượt live ở đây chỉ đánh giá dữ liệu giả lập; không hủy tác vụ, sửa file người dùng hoặc vận hành app của bạn. Chưa xác nhận toàn bộ hành vi scheduler/Send Now trong mọi phiên bản native app hoặc trên máy khác. Phân loại ngữ nghĩa vẫn có thể sai, và checkpoint có escape hữu hạn; đây không phải sandbox bảo mật hay bảo đảm AI luôn trả lời đúng.
+
+## Lỗi phát hiện từ phiên native thật
+
+Ngày 19/10, câu hỏi “tại sao chạy e2e liên tục vậy” có một câu trả lời dài trong `PLANNER_RESPONSE` cùng `tool_calls`, nhưng ảnh của người dùng chỉ hiện lời báo assessment/status. Bộ lọc cũ đã nhận nhầm phần bị ẩn là câu trả lời. Bản sửa loại record có tool_calls hoặc truncated_fields, kiểm tra lại bằng chứng receipt cũ, và không nhận câu trả lời xuất hiện sau khi assessment bắt đầu. Ba regression mới tái hiện các lỗi này đã PASS. Không công bố nội dung transcript cá nhân. Bốn ca semantic phía trên vẫn chỉ xác nhận phân loại dữ liệu giả lập; chưa có xác nhận UI sau bản sửa từ người dùng.

@@ -16,7 +16,7 @@ def check(command, arguments, workspaces):
         cwd = (cwd / words[1]).resolve()
         words = words[3:]
     if not words or Path(words[0]).name != 'git':
-        if any(Path(word).name == 'git' for word in words) and any(word in ('commit', 'push') for word in words):
+        if any(Path(word).name == 'git' for word in words) and any(word in ('add', 'commit', 'push') for word in words):
             return 'Use a standalone git commit/push command with explicit Cwd; wrappers and command-local Git environment cannot be branch-verified.'
         return None
     index = 1
@@ -34,7 +34,7 @@ def check(command, arguments, workspaces):
         else:
             unsupported = True
             index += 2 if flag in ('-c', '--git-dir', '--work-tree', '--config-env', '--namespace') else 1
-    if index >= len(words) or words[index] not in ('commit', 'push'):
+    if index >= len(words) or words[index] not in ('add', 'commit', 'push'):
         return None
     operation = words[index]
     rest = words[index + 1:]
@@ -62,8 +62,8 @@ def check(command, arguments, workspaces):
 
     if important(branch):
         return 'Protected branch ' + branch + ': create/switch to a focused working branch before commit/push. Do not move existing user changes or bypass this guard.'
-    if operation == 'commit':
-        if '--no-verify' in rest or any(word.startswith('-') and not word.startswith('--') and 'n' in word[1:] for word in rest):
+    if operation in ('add', 'commit'):
+        if operation == 'commit' and ('--no-verify' in rest or any(word.startswith('-') and not word.startswith('--') and 'n' in word[1:] for word in rest)):
             return 'Do not bypass repository verification hooks for an automatic commit.'
         return None
 

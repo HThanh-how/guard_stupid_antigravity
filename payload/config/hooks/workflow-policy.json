@@ -1,0 +1,4 @@
+{
+  "automatic_working_branch_git": true,
+  "foreground_ci_status_reads_per_head": 3
+}

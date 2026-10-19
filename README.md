@@ -77,11 +77,11 @@ Khi đang chờ, báo chờ gì, đã bao lâu, khoảng còn lại dựa trên 
 3. **Giải pháp gốc**: tái dùng luồng/thư viện/chuẩn sẵn có, đọc caller và nhánh lỗi trước khi sửa. Không thêm kiến trúc, phụ thuộc, hotfix hoặc tính năng ngoài phạm vi chỉ để làm test xanh. Chưa có cơ chế máy chứng minh mọi giải pháp đã được nghiên cứu trên mạng.
 4. **Test**: được sửa test khi đúng yêu cầu; phải giải thích thay đổi assertion/fixture/snapshot so với gốc. Reviewer xem skip/only, mock né production, giảm threshold, mất coverage và edge case. Không coi agent đang chạy, timeout, phản hồi rỗng là PASS.
 5. **Dữ liệu/async**: xác định invariant, ownership, commit point; kiểm tra create/import/persist/replace/delete/rollback, asset dùng chung; fault injection và kết quả đến sai thứ tự khi phù hợp. Kiểm tra cả success/failure, dispose/switch và cleanup muộn.
-6. **Git**: bình thường cần comprehensive review trước add/commit/push. Lời cấp quyền trực tiếp có thể được classifier diễn giải một lần, có scope và cache, không cần đúng một câu mẫu. Quyền không biến test chưa chạy thành PASS và không tự miễn kiểm tra readiness khi merge.
+6. **Git**: mặc định cho add/commit/push thông thường trên nhánh làm việc không quan trọng, không hỏi lại hoặc chờ reviewer. Review test trước chạy test vẫn giữ. Review toàn diện nhánh cuối cùng theo base PR vẫn cần trước Ready/merge; quyền push không phải bằng chứng PASS. `workflow-policy.json` chứa hai lựa chọn vận hành này và giới hạn đọc trạng thái CI.
 7. **Nhánh quan trọng**: snapshot hiện chặn commit/push tự động trên `main`, `master`, `develop`, `dev`, `production`, `prod`, `staging`, `release`, `release/*`, `releases/*` và remote default branch. Push bình thường chỉ cùng nhánh làm việc; không force/delete/mirror/all/tags. Đây vẫn là chặn cứng của cấu hình hiện tại, không có cam kết mọi lời cho phép sẽ mở hết.
 8. **UI**: chạy màn hình thật, chụp và **mở xem** ảnh; desktop/narrow khi liên quan. Báo clipping, overlap, loading/error, viewport và đường dẫn bằng chứng. Không gọi có ảnh là đã xác minh.
 9. **Dọn test**: finally/teardown đóng đúng app/process mình tạo; xóa fixture của tác vụ, giữ ảnh/log cần báo cáo. Không đóng app thường của người dùng hoặc xóa thư mục tạm không thuộc tác vụ.
-10. **CI/agent**: một monitor độc lập hữu hạn; parent làm việc khác không đổi scope/SHA. Nếu chỉ còn chờ thì báo PENDING; không tạo vòng polling hoặc agent lồng vô hạn.
+10. **CI/agent**: tối đa ba lần đọc trạng thái trực tiếp cho cùng chat/repo/HEAD (CLI và API tính chung), sau đó một monitor độc lập hữu hạn; đọc log lỗi vẫn được; parent làm việc khác không đổi scope/SHA. Nếu chỉ còn chờ thì báo PENDING; không tạo vòng polling hoặc agent lồng vô hạn.
 
 Hook là cơ chế hỗ trợ, không phải sandbox an ninh hoàn chỉnh hay bằng chứng rằng AI không thể bỏ sót prompt. Cần xem báo cáo, diff, log và kết quả thật.
 
@@ -101,6 +101,7 @@ Khi hook chặn, dùng **đúng key và cwd trong thông báo**, không sao ché
 
 ```bash
 python3 ~/.gemini/config/hooks/independent-agent.py review KEY_TU_THONG_BAO
+python3 ~/.gemini/config/hooks/independent-agent.py final-review --conversation ACTUAL_ID --cwd /absolute/repo --base origin/main
 python3 ~/.gemini/config/hooks/independent-agent.py author /absolute/request.txt --cwd /absolute/repo
 python3 ~/.gemini/config/hooks/authorize-git.py KEY_TU_THONG_BAO
 python3 ~/.gemini/config/hooks/independent-agent.py ci-monitor --repo owner/repo --sha FULL_SHA --run-id RUN_ID --cwd /absolute/repo --seconds 600
@@ -129,3 +130,7 @@ Installer in đường dẫn `~/.gemini/control-kit-backups/<timestamp>/`. `rece
 Gói đã loại `config.json`, MCP/server credentials, OAuth/token, lịch sử chat/brain, project registry, state review, authorization receipts, task-evidence, CI cache, node_modules và backup cá nhân. Máy mới phải có trạng thái review/quyền mới; không sao chép PASS hay quyền cũ.
 
 `SHA256SUMS.json` ghi checksum payload; installer kiểm tra trước khi ghi. Checksum kiểm tra tính nhất quán gói, không phải chữ ký xác thực tác giả. Snapshot đã đổi đường dẫn tuyệt đối của agent CI sang `~/.gemini/...`; các tên agent/nhóm hook còn giữ nguyên để tương thích.
+
+## Sửa lỗi câu trả lời bị ẩn — 19/10/2026
+
+Ảnh và transcript thật xác nhận native app có thể ẩn nội dung đi kèm tool call. Checkpoint cũ nhận nhầm nội dung đó là câu trả lời. Bản này loại nội dung có `tool_calls`, kiểm tra lại receipt cũ và chỉ nhận bằng chứng tồn tại khi assessment bắt đầu. AI đánh giá ý nghĩa câu hỏi, không dùng danh sách từ khóa. Vẫn có deadline/escape hữu hạn, nên không bảo đảm tuyệt đối mọi câu hỏi đều được trả lời; xem `ATTENTION-TESTING.md`.

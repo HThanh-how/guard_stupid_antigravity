@@ -11,6 +11,53 @@ import signal
 import subprocess
 import sys
 import time
+import shlex
+
+
+def foreground_check(command, arguments, data, limit):
+    """Allow a few status observations, then hand repetitive polling to the worker."""
+    words = shlex.split(command)
+    cwd = arguments.get('Cwd') or arguments.get('cwd') or next(iter(data.get('workspacePaths', [])), os.getcwd())
+    if len(words) > 3 and words[0] == 'cd' and words[2] == '&&':
+        cwd = str((Path(cwd) / words[1]).resolve())
+        words = words[3:]
+    if not words or Path(words[0]).name != 'gh':
+        return None
+    guidance = ('Use one bounded ci-status-monitor for the exact Git-derived SHA and selected runs. '
+                'Do not replace it with timers, gh api polling, duplicate agents or automatic reruns. '
+                'If only CI remains, report PENDING CI and end the turn; failed diagnostics/logs may still be read.')
+    if words[1:3] == ['run', 'watch'] or words[1:3] == ['pr', 'checks'] and '--watch' in words:
+        return guidance
+    status_read = words[1:3] in (['run', 'list'], ['run', 'view'], ['pr', 'checks'])
+    if '--log' in words or '--log-failed' in words:
+        return None  # Reading a concrete failure is investigation, not a status wait.
+    if words[1:2] == ['api']:
+        if any(word.upper() in ('POST', 'PATCH', 'PUT', 'DELETE') for word in words):
+            return None
+        endpoints = [word for word in words[2:] if '/actions/' in word]
+        if any(word.rstrip('/').endswith('/logs') for word in endpoints):
+            return None
+        status_read = bool(endpoints)
+    if not status_read:
+        return None
+    try:
+        root, head = subprocess.check_output(
+            ['git', '-C', str(cwd), 'rev-parse', '--show-toplevel', 'HEAD'],
+            stderr=subprocess.DEVNULL, timeout=2, text=True).splitlines()
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return 'Cannot bind foreground CI observation to a local Git HEAD. ' + guidance
+    key = hashlib.sha256(json.dumps([data['conversationId'], root, head]).encode()).hexdigest()
+    directory = Path.home() / '.gemini/config/hooks/ci-monitor'
+    directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+    path = directory / ('foreground-' + key + '.json')
+    with path.with_suffix('.lock').open('a') as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        state = json.loads(path.read_text()) if path.exists() else {'reads': 0}
+        if state['reads'] >= limit:
+            return 'Foreground CI observation budget reached for HEAD ' + head + '. ' + guidance
+        state['reads'] += 1
+        path.write_text(json.dumps(state))
+    return None
 
 
 class MonitorCancelled(Exception):
