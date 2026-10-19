@@ -5,10 +5,10 @@ Snapshot ngày 19/10/2026 từ cấu hình cá nhân đang cài của chủ repo
 - `~/.gemini/GEMINI.md`
 - `~/.gemini/config/hooks.json`
 - Chỉ các file `.py`, `.sh`, `command-limits.json` ở cấp đầu của `~/.gemini/config/hooks/`.
-- Bốn thư mục agent trong `~/.gemini/config/agents/`.
+- Bốn thư mục agent gốc trong `~/.gemini/config/agents/`, cùng agent `conversation-attention` thêm cho bản thử ưu tiên câu hỏi.
 - Mười thư mục skill trong `~/.gemini/config/skills/`.
 
-Các source được giữ nguyên, ngoại trừ một đường dẫn home tuyệt đối trong hướng dẫn agent `ci-status-monitor` đã đổi sang `~/.gemini/`. Installer, README và bài kiểm tra installer được thêm riêng cho repo này. Không sửa cấu hình đang chạy trên máy gốc.
+Snapshot ban đầu giữ nguyên source, ngoại trừ một đường dẫn home tuyệt đối trong hướng dẫn agent CI đổi sang `~/.gemini/`. Bản thử tiếp theo bổ sung semantic attention checkpoint, nối PreToolUse và thêm policy trả lời câu chen ngang/báo ETA trung thực. Source đang chạy trên máy gốc chỉ được cập nhật sau kiểm tra và có backup, theo yêu cầu thử của chủ repo.
 
 Một số skill được cài/tùy biến từ bộ skill khác (Ponytail, systematic-debugging, verification-before-completion, GenOffice). Giữ metadata/ghi chú nguồn trong từng file. Repo này không gán lại một giấy phép chung cho các nội dung bên thứ ba; kiểm tra nguồn và quyền sử dụng tương ứng trước khi tái phân phối chúng tiếp.
 

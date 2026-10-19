@@ -11,3 +11,4 @@ payload/config/hooks/authorization/
 payload/config/hooks/backups/
 payload/config/hooks/ci-monitor/
 payload/config/hooks/task-evidence/
+payload/config/hooks/attention/

@@ -1,0 +1,66 @@
+{
+  "date": "2026-10-19",
+  "scope": "synthetic single-case semantic checks, no user-task actions",
+  "cases": [
+    {
+      "id": "eta-needs-basis-not-a-promise",
+      "report": {
+        "answer_evidence": "Đang chờ CI. Tôi sẽ báo sau.",
+        "intent": "MIXED",
+        "next_step": "ANSWER_FIRST",
+        "reason": "The user asked how much longer it will take ('Nó còn bao lâu nữa?') while instructing not to stop and let it continue running ('Đừng dừng nó, cho chạy tiếp.'). The assistant reply merely acknowledged waiting and promised to report later ('Đang chờ CI. Tôi sẽ báo sau.'), which is not an answer to the ETA question. Furthermore, the wait report lacks elapsed time, an ETA/explicit statement of unknown, and a finite deadline or scheduled next check, making it MISSING.",
+        "response": "UNANSWERED",
+        "stop_evidence": "Đừng dừng nó, cho chạy tiếp.",
+        "stop_requested": false,
+        "user_evidence": "Nó còn bao lâu nữa? Đừng dừng nó, cho chạy tiếp.",
+        "wait_report": "MISSING",
+        "waiting": true
+      }
+    },
+    {
+      "id": "polite-question-can-be-stop",
+      "report": {
+        "answer_evidence": "",
+        "intent": "STOP",
+        "next_step": "CONTINUE",
+        "reason": "The user politely instructs to stop the current agent while keeping the build process running ('Bạn dừng agent hiện tại giúp tôi được không, nhưng giữ tiến trình build nhé?'). This is a stop request rather than an informational question. The assistant acknowledged understanding the instruction ('Tôi hiểu: dừng agent hiện tại, giữ build chạy.') and no informational question was asked, making response NOT_NEEDED and waiting not applicable.",
+        "response": "NOT_NEEDED",
+        "stop_evidence": "Bạn dừng agent hiện tại giúp tôi được không",
+        "stop_requested": true,
+        "user_evidence": "Bạn dừng agent hiện tại giúp tôi được không, nhưng giữ tiến trình build nhé?",
+        "wait_report": "NOT_APPLICABLE",
+        "waiting": false
+      }
+    },
+    {
+      "id": "quoted-stop-is-not-consent",
+      "report": {
+        "answer_evidence": "Tôi đã hiểu sai ý bạn. Câu hỏi đó không cấp quyền hủy; agent vẫn được giữ chạy.",
+        "intent": "QUESTION",
+        "next_step": "CONTINUE",
+        "reason": "The user asks why the assistant interpreted a quoted phrase as a cancellation request and explicitly clarifies they did not ask to cancel. The assistant directly answers and confirms the agent remains running.",
+        "response": "ANSWERED",
+        "stop_evidence": "chứ tôi chưa bảo bạn hủy",
+        "stop_requested": false,
+        "user_evidence": "Tôi đang hỏi vì sao bạn hiểu câu 'dừng agent' là yêu cầu hủy, chứ tôi chưa bảo bạn hủy.",
+        "wait_report": "NOT_APPLICABLE",
+        "waiting": false
+      }
+    },
+    {
+      "id": "why-is-not-cancel",
+      "report": {
+        "answer_evidence": "Tôi sẽ xem rồi trả lời sau.",
+        "intent": "QUESTION",
+        "next_step": "ANSWER_FIRST",
+        "reason": "The user asked why the agent had to run. The assistant only promised to check later ('Tôi sẽ xem rồi trả lời sau.'), which is not an answer. A question about why an agent runs is not a stop request.",
+        "response": "UNANSWERED",
+        "stop_evidence": "",
+        "stop_requested": false,
+        "user_evidence": "Ủa sao lại phải chạy agent đó vậy?",
+        "wait_report": "NOT_APPLICABLE",
+        "waiting": false
+      }
+    }
+  ]
+}

@@ -107,6 +107,12 @@ def main():
     conv = data.get('conversationId')
     if not conv:
         raise ValueError('Missing conversationId; cannot safely track reviewer completion')
+    attention = Path(__file__).with_name('conversation-attention.py')
+    if event == 'pre' and attention.exists():
+        priority_result = runpy.run_path(str(attention))['gate'](data)
+        if priority_result:
+            print(json.dumps(priority_result, ensure_ascii=False))
+            return
     directory = Path.home() / '.gemini/config/hooks/state'
     directory.mkdir(mode=0o700, parents=True, exist_ok=True)
     key = hashlib.sha256(conv.encode()).hexdigest()

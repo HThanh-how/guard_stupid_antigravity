@@ -85,6 +85,9 @@ def validate_report(value, schema, location='report'):
     elif kind in ('integer', 'number'):
         if isinstance(value, bool) or not isinstance(value, int if kind == 'integer' else (int, float)):
             raise ValueError(location + ' must be a number')
+    elif kind == 'boolean':
+        if type(value) is not bool:
+            raise ValueError(location + ' must be a boolean')
     else:
         raise ValueError('Unsupported local schema type')
 
@@ -116,12 +119,16 @@ def agent_result(role, prompt, cwd, schema, read_directories=(), timeout_seconds
     prompt += '\n\nReturn ONLY one JSON object matching this schema, with no prose or Markdown fences:\n' + json.dumps(schema)
     command = [str(binary), '--agent', role, '--print-timeout', str(timeout_seconds) + 's',
                '--disable-slash-commands', '--output-format', 'json', '-p', prompt]
+    if role == 'conversation-attention':
+        # Small routing decision: bounded reasoning and native schema enforcement,
+        # rather than a general engineering analysis with a JSON suggestion.
+        command[1:1] = ['--effort', 'low', '--json-schema', json.dumps(schema)]
     for directory in read_directories:
         if directory and Path(directory).is_dir():
             command[1:1] = ['--add-dir', str(directory)]
     child = subprocess.Popen(command, cwd=cwd, stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True,
-        env={**os.environ, 'AGY_GUARD_ROLE': 'intent-classifier' if role == 'git-intent-classifier' else ('ci-monitor' if role == 'ci-status-monitor' else 'readonly-independent')})
+        env={**os.environ, 'AGY_GUARD_ROLE': 'intent-classifier' if role in ('git-intent-classifier', 'conversation-attention') else ('ci-monitor' if role == 'ci-status-monitor' else 'readonly-independent')})
 
     def interrupt(signum, frame):
         raise AgentCancelled('Independent agent was cancelled')

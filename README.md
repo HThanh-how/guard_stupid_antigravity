@@ -42,17 +42,33 @@ Kiểm tra các thành phần được nạp trong app sau khi restart. Schema h
 | `consequence-review.py` | Thu yêu cầu gốc, kiểm tra hệ quả dữ liệu và thứ tự async |
 | `ci-monitor.py` | Theo dõi CI hữu hạn theo đúng repo/SHA/run ID |
 | `check-*.py` | Các bài kiểm tra hồi quy của bộ hook, không phải trạng thái đã duyệt |
-| `config/agents/*/agent.md` | 4 agent chuyên trách bên dưới |
+| `conversation-attention.py` | Checkpoint hiểu ý định câu chen ngang và kiểm tra câu trả lời thật, hữu hạn |
+| `config/agents/*/agent.md` | 5 agent chuyên trách bên dưới |
 | `config/skills/*/SKILL.md` | 10 skill đang dùng, gồm debugging, verification, consequences, GenOffice và Ponytail |
 
 Đường dẫn thực tế sau cài là `~/.gemini/config/hooks/<tên file>`. Tên `genoffice` được giữ để khớp agent/hook hiện có; phần guard chung không chỉ áp dụng repo GenOffice. Skill GenOffice cần cài GenOffice riêng; gói này không chứa bộ cài ứng dụng.
 
-## Bốn agent
+## Năm agent
 
 - **genoffice-test-author**: đọc yêu cầu/baseline, đề xuất diff test; không sửa file hoặc chạy lệnh. Parent áp dụng diff rồi đưa reviewer độc lập xem.
 - **genoffice-reviewer**: chỉ có công cụ đọc/tìm kiếm; kiểm tra toàn bộ thay đổi liên quan, edge case, độ trung thực test và bằng chứng UI. Không giả vờ đã chạy test.
 - **git-intent-classifier**: phân loại lời cấp quyền thật bằng JSON, không công cụ hành động. Cho commit không tự suy ra cho push.
 - **ci-status-monitor**: gọi worker CI chỉ đọc, hữu hạn một lần; không sửa code, restart CI, commit hoặc push.
+- **conversation-attention**: không công cụ hành động; hiểu ngữ cảnh câu chen ngang, phân biệt hỏi/dừng/đổi việc và kiểm tra trả lời + báo thời gian chờ. Không cấp quyền hủy agent hoặc Git.
+
+### Bản thử ưu tiên câu hỏi giữa lúc làm
+
+Hook ghi nhận tin **đã được app giao**, nhắc parent trả lời trước khi gọi tool tiếp, rồi yêu cầu một lượt đánh giá ngữ nghĩa độc lập trên lời người dùng và câu trả lời hiển thị thật. Không có danh sách từ khóa tiếng Việt/Anh để quyết định ý định. Một câu hỏi lịch sự có thể là yêu cầu dừng thật; một câu có chữ “dừng” trong ví dụ có thể chỉ là câu hỏi.
+
+Lượt đọc đầu tiên chỉ ghi mốc để không chặn hồi tố các chat cũ khi vừa cài. Từ tin được giao tiếp theo, câu trả lời thiếu hoặc chỉ hứa sẽ xem không được coi là đã trả lời. Có thể cần thêm một tool đánh giá, nên đây là đánh đổi độ trễ để giảm bỏ sót câu hỏi. Agent phải trả lời bằng prose **trước** bước đánh giá này, không giữ người dùng chờ classifier mới trả lời.
+
+Classifier tối đa 20 giây CLI + deadline process ngoài, chỉ có `finish` để kết thúc báo cáo, không công cụ hành động; cache theo tin và bằng chứng thật. Dùng structured output của CLI và reasoning thấp cho việc định tuyến nhỏ này. Tối đa hai lượt khi câu trả lời đã đổi; cùng ngữ cảnh không được đánh giá lại. Checkpoint tự nhả với cảnh báo UNVERIFIED sau lỗi/hết budget, quá 90 giây hoặc ba lần nhắc không được xử lý; không tạo Stop loop hay tự hủy tác vụ. Gate test/Git vẫn hoạt động độc lập. Đây là bản thử, không bảo đảm phân loại luôn đúng.
+
+Khi thiếu dữ kiện, classifier có thể cho **một bước đọc đúng tool/args đã đánh giá** để trả lời: đọc file/tìm kiếm/resource hoặc xem trạng thái task. Không áp dụng với shell tùy ý, hủy task hoặc công việc không liên quan. Kết quả đọc vẫn cần được diễn giải và trả lời; nó không tự xóa câu hỏi còn mở.
+
+Câu hỏi được xác định còn mở, kể cả follow-up chưa kịp đánh giá khi tin mới đến, được giữ trong state riêng của chat. Một lời “tiếp đi” không tự xóa chúng. Đóng câu hỏi cần bằng chứng câu trả lời, lời người dùng thật thay đổi yêu cầu, hoặc phân loại có bằng chứng rằng follow-up đó vốn không phải câu hỏi. State này không được đưa vào repo/gói cài. Xem [kết quả và cách thử](ATTENTION-TESTING.md).
+
+Khi đang chờ, báo chờ gì, đã bao lâu, khoảng còn lại dựa trên tiến độ **hoặc nói chưa ước lượng tin cậy được**, hạn chờ và mốc kiểm tra tới. Hạn chờ không phải giờ hoàn thành; nói dự định kiểm tra lại không có nghĩa app đã đặt lịch. Hook không thấy tin còn nằm trong hàng đợi của UI, và không thể chen vào một native tool đang treo.
 
 ## Các hành vi được kiểm soát
 
